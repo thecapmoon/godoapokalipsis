@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ГОДОАПОКАЛИПСИС</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101512;color:#eef3e9;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;justify-content:center;min-height:100vh}
+main{width:min(100%,900px);padding:14px}
+h1{font-size:clamp(22px,5vw,34px);margin:4px 0;color:#ff72c6}p{margin:5px 0 12px;color:#c3cdbd;font-size:14px}
+#hud{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.stat{background:#202b23;border:1px solid #39483b;border-radius:10px;padding:7px 11px;font-weight:700;font-size:14px}
+canvas{width:100%;height:auto;display:block;background:#26352a;border:2px solid #60715b;border-radius:12px;touch-action:none}
+#overlay{position:relative;margin-top:-min(65vw,540px);height:min(65vw,540px);pointer-events:none;display:flex;align-items:center;justify-content:center;text-align:center}
+#message{pointer-events:auto;background:#101712eF;border:1px solid #75866d;border-radius:14px;padding:18px;max-width:85%}
+#message h2{margin:0 0 8px;color:#c7ec9d}#message button,.controls button{background:#a8d77d;color:#14200f;border:0;border-radius:10px;padding:11px 17px;font-weight:800;font-size:15px}
+#message button{margin-top:8px}
+.controls{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px}
+.pad{display:grid;grid-template-columns:repeat(3,48px);grid-template-rows:repeat(2,42px);gap:4px}
+.pad button{padding:5px;font-size:18px;touch-action:none}
+.pad button:nth-child(1){grid-column:2}.pad button:nth-child(2){grid-column:1;grid-row:2}.pad button:nth-child(3){grid-column:2;grid-row:2}.pad button:nth-child(4){grid-column:3;grid-row:2}
+#fire{min-width:112px;min-height:88px;background:#e36c4e;color:white}
+small{display:block;color:#aeb9aa;margin-top:9px;line-height:1.4}
+@media(min-width:700px){#overlay{margin-top:-540px;height:540px}}
+</style>
+</head>
+<body><main>
+<h1>🧟 ГОДОАПОКАЛИПСИС</h1>
+<p>Переживи как можно больше волн. Собирай аптечки и не дай себя окружить.</p>
+<div id="hud">
+<div class="stat">❤️ Здоровье: <span id="hp">100</span></div>
+<div class="stat">🔫 Патроны: <span id="ammo">12</span></div>
+<div class="stat">☠️ Убито: <span id="kills">0</span></div>
+<div class="stat">⏱ Время: <span id="time">0</span> сек.</div>
+<div class="stat">🏆 Рекорд: <span id="record">0</span></div>
+</div>
+<canvas id="game" width="800" height="540"></canvas>
+<div id="overlay"><div id="message"><h2>Апокалипсис начался</h2><div>Ты один против толпы заражённых.<br>Двигайся, стреляй и продержись как можно дольше.</div><button id="start">НАЧАТЬ ВЫЖИВАНИЕ</button></div></div>
+<div class="controls">
+<div class="pad">
+<button data-key="w">▲</button><button data-key="a">◀</button><button data-key="s">▼</button><button data-key="d">▶</button>
+</div>
+<button id="fire">СТРЕЛЯТЬ<br>●</button>
+</div>
+<small>На компьютере: WASD — движение, мышь — прицел и стрельба. На телефоне: кнопки движения и «Стрелять». Патроны бесконечные.</small>
+</main>
+<script>
+const c=document.getElementById('game'),ctx=c.getContext('2d');
+const $=id=>document.getElementById(id);
+let player,zombies,bullets,medkits,keys={},running=false,kills=0,ammo=Infinity,hp=100,elapsed=0,last=0,spawn=0,shot=0,aim={x:600,y:270},fireHeld=false;
+let best=Number(localStorage.getItem('godo_best')||0);$('record').textContent=best;
+const tg=window.Telegram?.WebApp; if(tg){tg.ready();tg.expand();}
+function saveScore(){const score=Math.floor(elapsed);if(score>best){best=score;localStorage.setItem('godo_best',String(best));$('record').textContent=best;}const user=tg?.initDataUnsafe?.user;fetch('/api/scores',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:user?.first_name||'Игрок',userId:user?.id||null,score})}).catch(()=>{});}
+const W=800,H=540;
+function reset(){player={x:W/2,y:H/2,r:13,speed:205,inv:0};zombies=[];bullets=[];medkits=[];kills=0;ammo=Infinity;hp=100;elapsed=0;spawn=0;shot=0;last=0;updateHud()}
+function updateHud(){$('hp').textContent=Math.max(0,Math.ceil(hp));$('ammo').textContent='∞';$('kills').textContent=kills;$('time').textContent=Math.floor(elapsed)}
+function start(){reset();running=true;$('overlay').style.display='none';requestAnimationFrame(loop)}
+$('start').onclick=start;
+window.addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase()))e.preventDefault()});
+window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+document.querySelectorAll('[data-key]').forEach(b=>{let k=b.dataset.key;b.addEventListener('pointerdown',e=>{e.preventDefault();keys[k]=true});['pointerup','pointerleave','pointercancel'].forEach(ev=>b.addEventListener(ev,()=>keys[k]=false))});
+function pointerPos(e){let r=c.getBoundingClientRect();aim={x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height}}
+c.addEventListener('pointermove',pointerPos);c.addEventListener('pointerdown',e=>{pointerPos(e);fireHeld=true;c.setPointerCapture(e.pointerId)});c.addEventListener('pointerup',()=>fireHeld=false);c.addEventListener('pointercancel',()=>fireHeld=false);
+$('fire').addEventListener('pointerdown',e=>{e.preventDefault();fireHeld=true});['pointerup','pointerleave','pointercancel'].forEach(ev=>$('fire').addEventListener(ev,()=>fireHeld=false));
+function spawnZombie(){let side=Math.floor(Math.random()*4),x=side===0?0:side===1?W:Math.random()*W,y=side===2?0:side===3?H:Math.random()*H;let tough=Math.random()<Math.min(.35,elapsed/180);zombies.push({x,y,r:tough?17:13,hp:tough?3:2,speed:(tough?34:43)+Math.min(40,elapsed*.22),hit:0,tough})}
+function shoot(){let dx=aim.x-player.x,dy=aim.y-player.y,d=Math.hypot(dx,dy)||1;bullets.push({x:player.x,y:player.y,vx:dx/d*520,vy:dy/d*520,life:1.15});shot=.22}
+function loop(t){if(!running)return;let dt=Math.min(.033,(t-last)/1000||.016);last=t;elapsed+=dt;spawn-=dt;shot-=dt;player.inv=Math.max(0,player.inv-dt);
+let dx=(keys.d?1:0)-(keys.a?1:0),dy=(keys.s?1:0)-(keys.w?1:0),len=Math.hypot(dx,dy)||1;player.x=Math.max(15,Math.min(W-15,player.x+dx/len*player.speed*dt));player.y=Math.max(15,Math.min(H-15,player.y+dy/len*player.speed*dt));
+if((fireHeld||keys[' '])&&shot<=0)shoot();
+if(spawn<=0){spawnZombie();if(elapsed>25&&Math.random()<.35)spawnZombie();spawn=Math.max(.42,1.65-elapsed*.012)}
+for(let b of bullets){b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt;for(let z of zombies){if(z.hp>0&&Math.hypot(z.x-b.x,z.y-b.y)<z.r+4){z.hp--;b.life=0;if(z.hp<=0){kills++;if(Math.random()<.12)medkits.push({x:z.x,y:z.y,r:9})}break}}}
+bullets=bullets.filter(b=>b.life>0&&b.x>-10&&b.x<W+10&&b.y>-10&&b.y<H+10);
+for(let z of zombies){let d=Math.hypot(player.x-z.x,player.y-z.y)||1;z.x+=(player.x-z.x)/d*z.speed*dt;z.y+=(player.y-z.y)/d*z.speed*dt;if(d<z.r+player.r&&player.inv<=0){hp-=z.tough?18:11;player.inv=.65}}
+for(let m of medkits){if(Math.hypot(player.x-m.x,player.y-m.y)<player.r+m.r){hp=Math.min(100,hp+25);m.gone=true}}medkits=medkits.filter(m=>!m.gone);
+updateHud();draw();
+if(hp<=0){running=false;saveScore();$('message').innerHTML=`<h2>Ты пал в бою</h2><div>Продержался: ${Math.floor(elapsed)} сек.<br>Уничтожено зомби: ${kills}</div><button onclick="start()">ПОПРОБОВАТЬ СНОВА</button>`;$('overlay').style.display='flex';return}
+requestAnimationFrame(loop)}
+function draw(){ctx.fillStyle='#26352a';ctx.fillRect(0,0,W,H);ctx.strokeStyle='#344735';ctx.lineWidth=1;for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+ctx.fillStyle='#61705b';for(let i=0;i<18;i++){let x=(i*137+31)%W,y=(i*83+17)%H;ctx.fillRect(x,y,3,3)}
+for(let m of medkits){ctx.fillStyle='#f1f1dc';ctx.fillRect(m.x-8,m.y-8,16,16);ctx.fillStyle='#d64c43';ctx.fillRect(m.x-2,m.y-6,4,12);ctx.fillRect(m.x-6,m.y-2,12,4)}
+for(let b of bullets){ctx.fillStyle='#ffffff';ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill()}
+for(let z of zombies){ctx.fillStyle=z.tough?'#a8a15b':'#78a66b';ctx.beginPath();ctx.arc(z.x,z.y,z.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#26352a';ctx.fillRect(z.x-6,z.y-4,3,3);ctx.fillRect(z.x+3,z.y-4,3,3);if(z.tough){ctx.strokeStyle='#e5c66c';ctx.lineWidth=2;ctx.stroke()}}
+ctx.save();ctx.translate(player.x,player.y);ctx.rotate(Math.atan2(aim.y-player.y,aim.x-player.x));ctx.fillStyle='#d7e7d0';ctx.beginPath();ctx.arc(0,0,player.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ff4fb8';ctx.fillRect(3,-5,23,10);ctx.fillStyle='#ffffff';ctx.fillRect(23,-3,5,6);ctx.restore();
+if(player.inv>0){ctx.strokeStyle='#ff9c75';ctx.lineWidth=3;ctx.beginPath();ctx.arc(player.x,player.y,19,0,Math.PI*2);ctx.stroke()}
+}
+</script></body></html>
